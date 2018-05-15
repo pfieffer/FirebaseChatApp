@@ -2,8 +2,10 @@ package np.com.ravipun.firebasechatapp;
 
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.net.Uri;
 import android.preference.PreferenceManager;
 import android.support.annotation.NonNull;
+import android.support.v4.content.ContextCompat;
 import android.support.v7.app.AppCompatActivity;
 import android.os.Bundle;
 import android.support.v7.widget.LinearLayoutManager;
@@ -12,10 +14,12 @@ import android.text.Editable;
 import android.text.InputFilter;
 import android.text.TextWatcher;
 import android.util.Log;
+import android.view.LayoutInflater;
 import android.view.Menu;
 import android.view.MenuInflater;
 import android.view.MenuItem;
 import android.view.View;
+import android.view.ViewGroup;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.ImageView;
@@ -23,12 +27,23 @@ import android.widget.ProgressBar;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import com.bumptech.glide.Glide;
 import com.crashlytics.android.Crashlytics;
+import com.firebase.ui.database.FirebaseRecyclerAdapter;
+import com.firebase.ui.database.FirebaseRecyclerOptions;
+import com.firebase.ui.database.SnapshotParser;
 import com.google.android.gms.auth.api.Auth;
 import com.google.android.gms.common.ConnectionResult;
 import com.google.android.gms.common.api.GoogleApiClient;
+import com.google.android.gms.tasks.OnCompleteListener;
+import com.google.android.gms.tasks.Task;
 import com.google.firebase.auth.FirebaseAuth;
 import com.google.firebase.auth.FirebaseUser;
+import com.google.firebase.database.DataSnapshot;
+import com.google.firebase.database.DatabaseReference;
+import com.google.firebase.database.FirebaseDatabase;
+import com.google.firebase.storage.FirebaseStorage;
+import com.google.firebase.storage.StorageReference;
 
 import de.hdodenhof.circleimageview.CircleImageView;
 import io.fabric.sdk.android.Fabric;
@@ -74,6 +89,9 @@ public class MainActivity extends AppCompatActivity implements GoogleApiClient.O
     // Firebase instance variables
     private FirebaseAuth mFirebaseAuth;
     private FirebaseUser mFirebaseUser;
+    private DatabaseReference mFirebaseDatabaseReference;
+    private FirebaseRecyclerAdapter<Message, MessageViewHolder>
+            mFirebaseAdapter;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -111,7 +129,106 @@ public class MainActivity extends AppCompatActivity implements GoogleApiClient.O
         mLinearLayoutManager.setStackFromEnd(true);
         mMessageRecyclerView.setLayoutManager(mLinearLayoutManager);
 
-        mProgressBar.setVisibility(ProgressBar.INVISIBLE);
+        /*
+        This code initially adds all existing messages and then listens for new child entries under
+        the messages path in your Firebase Realtime Database. It adds a new element to the UI for each message:
+         */
+        // New child entries
+        mFirebaseDatabaseReference = FirebaseDatabase.getInstance().getReference();
+        SnapshotParser<Message> parser = new SnapshotParser<Message>() {
+            @Override
+            public Message parseSnapshot(DataSnapshot dataSnapshot) {
+                Message message = dataSnapshot.getValue(Message.class);
+                if (message != null) {
+                    message.setId(dataSnapshot.getKey());
+                }
+                return message;
+            }
+        };
+
+        DatabaseReference messagesRef = mFirebaseDatabaseReference.child(MESSAGES_CHILD);
+        FirebaseRecyclerOptions<Message> options =
+                new FirebaseRecyclerOptions.Builder<Message>()
+                        .setQuery(messagesRef, parser)
+                        .build();
+        mFirebaseAdapter = new FirebaseRecyclerAdapter<Message, MessageViewHolder>(options) {
+            @Override
+            public MessageViewHolder onCreateViewHolder(ViewGroup viewGroup, int i) {
+                LayoutInflater inflater = LayoutInflater.from(viewGroup.getContext());
+                return new MessageViewHolder(inflater.inflate(R.layout.item_message, viewGroup, false));
+            }
+
+            @Override
+            protected void onBindViewHolder(final MessageViewHolder viewHolder,
+                                            int position,
+                                            Message message) {
+                mProgressBar.setVisibility(ProgressBar.INVISIBLE);
+                if (message.getText() != null) {
+                    viewHolder.messageTextView.setText(message.getText());
+                    viewHolder.messageTextView.setVisibility(TextView.VISIBLE);
+                    viewHolder.messageImageView.setVisibility(ImageView.GONE);
+                } else if (message.getImageUrl() != null) {
+                    String imageUrl = message.getImageUrl();
+                    if (imageUrl.startsWith("gs://")) {
+                        StorageReference storageReference = FirebaseStorage.getInstance()
+                                .getReferenceFromUrl(imageUrl);
+                        storageReference.getDownloadUrl().addOnCompleteListener(
+                                new OnCompleteListener<Uri>() {
+                                    @Override
+                                    public void onComplete(@NonNull Task<Uri> task) {
+                                        if (task.isSuccessful()) {
+                                            String downloadUrl = task.getResult().toString();
+                                            Glide.with(viewHolder.messageImageView.getContext())
+                                                    .load(downloadUrl)
+                                                    .into(viewHolder.messageImageView);
+                                        } else {
+                                            Log.w(TAG, "Getting download url was not successful.",
+                                                    task.getException());
+                                        }
+                                    }
+                                });
+                    } else {
+                        Glide.with(viewHolder.messageImageView.getContext())
+                                .load(message.getImageUrl())
+                                .into(viewHolder.messageImageView);
+                    }
+                    viewHolder.messageImageView.setVisibility(ImageView.VISIBLE);
+                    viewHolder.messageTextView.setVisibility(TextView.GONE);
+                }
+
+
+                viewHolder.messengerTextView.setText(message.getName());
+                if (message.getPhotoUrl() == null) {
+                    viewHolder.messengerImageView.setImageDrawable(ContextCompat.getDrawable(MainActivity.this,
+                            R.drawable.ic_account_circle_black_36dp));
+                } else {
+                    Glide.with(MainActivity.this)
+                            .load(message.getPhotoUrl())
+                            .into(viewHolder.messengerImageView);
+                }
+
+            }
+        };
+
+        mFirebaseAdapter.registerAdapterDataObserver(new RecyclerView.AdapterDataObserver() {
+            @Override
+            public void onItemRangeInserted(int positionStart, int itemCount) {
+                super.onItemRangeInserted(positionStart, itemCount);
+                int friendlyMessageCount = mFirebaseAdapter.getItemCount();
+                int lastVisiblePosition =
+                        mLinearLayoutManager.findLastCompletelyVisibleItemPosition();
+                // If the recycler view is initially being loaded or the
+                // user is at the bottom of the list, scroll to the bottom
+                // of the list to show the newly added message.
+                if (lastVisiblePosition == -1 ||
+                        (positionStart >= (friendlyMessageCount - 1) &&
+                                lastVisiblePosition == (positionStart - 1))) {
+                    mMessageRecyclerView.scrollToPosition(positionStart);
+                }
+            }
+        });
+
+        mMessageRecyclerView.setAdapter(mFirebaseAdapter);
 
         mMessageEditText = (EditText) findViewById(R.id.messageEditText);
         mMessageEditText.setFilters(new InputFilter[]{new InputFilter.LengthFilter(mSharedPreferences
@@ -161,12 +278,14 @@ public class MainActivity extends AppCompatActivity implements GoogleApiClient.O
 
     @Override
     public void onPause() {
+        mFirebaseAdapter.stopListening();
         super.onPause();
     }
 
     @Override
     public void onResume() {
         super.onResume();
+        mFirebaseAdapter.startListening();
     }
 
     @Override
