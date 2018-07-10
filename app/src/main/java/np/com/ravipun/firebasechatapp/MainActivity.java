@@ -398,6 +398,10 @@ public class MainActivity extends AppCompatActivity implements GoogleApiClient.O
     @Override
     public boolean onOptionsItemSelected(MenuItem item) {
         switch (item.getItemId()) {
+            case R.id.crash_menu:
+                Log.w("Crashlytics", "Crash button clicked");
+                causeCrash();
+                return true;
             case R.id.invite_menu:
                 sendInvitation();
                 return true;
@@ -414,6 +418,10 @@ public class MainActivity extends AppCompatActivity implements GoogleApiClient.O
             default:
                 return super.onOptionsItemSelected(item);
         }
+    }
+
+    private void causeCrash() {
+        throw new NullPointerException("Fake null pointer exception");
     }
 
     @Override
