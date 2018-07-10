@@ -79,7 +79,7 @@ public class MainActivity extends AppCompatActivity implements GoogleApiClient.O
     private String mPhotoUrl;
     private SharedPreferences mSharedPreferences;
     private GoogleApiClient mGoogleApiClient;
-    private static final String MESSAGE_URL = "http://friendlychat.firebase.google.com/message/";
+    private static final String MESSAGE_URL = "https://fir-chatapp-8229a.firebaseio.com/messages "; //http://friendlychat.firebase.google.com/message/
 
     private Button mSendButton;
     private RecyclerView mMessageRecyclerView;
